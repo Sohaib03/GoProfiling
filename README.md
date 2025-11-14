@@ -15,3 +15,11 @@ Wrote a very basic solution to test the correctness. The initial tests were run 
 | **Float Parsing** | 18% | Standard library parsing is overkill for simple data. | Use custom integer-based parsing. |
 
 Running for 1 Billion takes ~1m23sec
+
+## Week 3
+
+* Added a custom float parsing function (Reduced Runtime by very small amount)
+
+![CPU Profile Graph](images/parseFloat.png)
+
+Parsing is still taking considerable amount of time. I need to look into whether i can make parsing faster than this or not. The next challenge is to make the map lookups faster. 
