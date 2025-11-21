@@ -13,39 +13,28 @@ import (
 )
 
 type StationStats struct {
-	Min   float64
-	Max   float64
-	Sum   float64
-	Count int
+	Min   int64
+	Max   int64
+	Sum   int64
+	Count int64
 }
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
-func parseTemp(tempBytes []byte) float64 {
-	negative := false
-	index := 0
+const TableSize = 1 << 17 // ~131,072 slots
 
-	if tempBytes[index] == '-' {
-		index++
-		negative = true
+type StationItem struct {
+	Key   []byte // The station name
+	Stats StationStats
+}
+
+func hash(name []byte) uint64 {
+	var h uint64 = 14695981039346656037
+	for _, b := range name {
+		h ^= uint64(b)
+		h *= 1099511628211
 	}
-
-	temp := float64(tempBytes[index] - '0')
-	index++
-
-	if tempBytes[index] != '.' {
-		temp = temp*10 + float64(tempBytes[index]-'0')
-		index++
-	}
-
-	index++
-
-	temp += float64(tempBytes[index]-'0') / 10
-
-	if negative {
-		return -temp
-	}
-	return temp
+	return h
 }
 
 func main() {
@@ -68,7 +57,7 @@ func main() {
 
 	startTime := time.Now()
 
-	statsMap := make(map[string]*StationStats)
+	var items [TableSize]StationItem
 
 	inputFile, err := os.Open(inputFilePath)
 	if err != nil {
@@ -81,65 +70,101 @@ func main() {
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
-		semicolonIndex := bytes.IndexByte(line, ';')
-		if semicolonIndex == -1 {
-			continue
-		}
+		end := len(line)
 
-		stationNameBytes := line[:semicolonIndex]
-		tempBytes := line[semicolonIndex+1:]
+		tenths := int64(line[end-1] - '0')
 
-		temp := parseTemp(tempBytes)
+		ones := int64(line[end-3] - '0')
 
-		stationName := string(stationNameBytes)
+		var temp int64
+		var stationNameBytes []byte
 
-		stats, exists := statsMap[stationName]
+		c := line[end-4]
 
-		if !exists {
-			statsMap[stationName] = &StationStats{
-				Min:   temp,
-				Max:   temp,
-				Sum:   temp,
-				Count: 1,
-			}
+		if c == ';' {
+			// Format: N.N
+			temp = ones*10 + tenths
+			stationNameBytes = line[:end-4] // Semicolon is here
+		} else if c == '-' {
+			// Format: -N.N
+			temp = -(ones*10 + tenths)
+			stationNameBytes = line[:end-5] // Semicolon is one back
 		} else {
-			stats.Sum += temp
-			stats.Count++
-			if temp < stats.Min {
-				stats.Min = temp
-			}
-			if temp > stats.Max {
-				stats.Max = temp
+			// Format: NN.N or -NN.N
+			tens := int64(c - '0')
+			if line[end-5] == ';' {
+				// Format: NN.N
+				temp = tens*100 + ones*10 + tenths
+				stationNameBytes = line[:end-5]
+			} else {
+				// Format: -NN.N
+				temp = -(tens*100 + ones*10 + tenths)
+				stationNameBytes = line[:end-6]
 			}
 		}
+
+		h := hash(stationNameBytes)
+		idx := h & (TableSize - 1)
+
+		for {
+			if items[idx].Key == nil {
+				key := make([]byte, len(stationNameBytes))
+				copy(key, stationNameBytes)
+				items[idx].Key = key
+
+				items[idx].Stats.Min = temp
+				items[idx].Stats.Max = temp
+				items[idx].Stats.Sum = temp
+				items[idx].Stats.Count = 1
+				break
+			}
+
+			if bytes.Equal(items[idx].Key, stationNameBytes) {
+				s := &items[idx].Stats
+				s.Sum += temp
+				s.Count++
+				if temp < s.Min {
+					s.Min = temp
+				}
+				if temp > s.Max {
+					s.Max = temp
+				}
+				break
+			}
+
+			idx = (idx + 1) & (TableSize - 1)
+		}
+
 	}
 
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error reading file: %v", err)
 	}
 
-	stationNames := make([]string, 0, len(statsMap))
-	for name := range statsMap {
-		stationNames = append(stationNames, name)
+	var sortedStations []string
+	results := make(map[string]*StationStats)
+
+	for i := range items {
+		if items[i].Key == nil {
+			continue
+		}
+		name := string(items[i].Key)
+		sortedStations = append(sortedStations, name)
+		results[name] = &items[i].Stats
 	}
-	sort.Strings(stationNames)
+	sort.Strings(sortedStations)
 
 	outputFile, err := os.Create("output.txt")
-	if err != nil {
-		log.Fatalf("Error creating output file: %v", err)
-	}
 	defer outputFile.Close()
-
 	writer := bufio.NewWriter(outputFile)
 
 	fmt.Fprint(writer, "{")
-	for i, stationName := range stationNames {
-		stats := statsMap[stationName]
-		mean := stats.Sum / float64(stats.Count)
+	for i, name := range sortedStations {
+		stats := results[name]
+		mean := float64(stats.Sum) / float64(stats.Count) / 10.0
+		fmt.Fprintf(writer, "%s=%.1f/%.1f/%.1f", name, float64(stats.Min)/10.0, mean, float64(stats.Max)/10.0)
 
-		fmt.Fprintf(writer, "%s=%.1f/%.1f/%.1f", stationName, stats.Min, mean, stats.Max)
-
-		if i < len(stationNames)-1 {
+		if i < len(sortedStations)-1 {
 			fmt.Fprint(writer, ", ")
 		}
 	}
