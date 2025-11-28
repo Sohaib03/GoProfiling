@@ -56,3 +56,14 @@ After using custom hashmap, we dropped another 12 seconds. The builtin map provi
 * Added a custom delimiter instead of bytes.IndexByte 
 
 ![CPU Profile Graph](images/CustomDelimiter.png)
+
+## Week 5
+
+Implemented parallelism in the code. Now it takes only 6.66 seconds to run on 1 Billion Rows. 
+
+Number of workers = 16 (Num of threads in CPU)
+First I thought to use a single map and use locks to update the hashtable by each thread. But this was a slow approach. 
+
+The optimized approach was using something similar to Map-Reduce. Each goroutine takes a chunk of the input file and maintains its own hashtable. Finally after each of these goroutines exit we will merge these maps to generate the final output. 
+
+* Saved 0.5seconds by storing the 64bit hash and comparing that before comparing the key

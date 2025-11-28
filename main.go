@@ -26,6 +26,7 @@ const TableSize = 1 << 17
 
 type StationItem struct {
 	Key   []byte
+	Hash  uint64
 	Stats StationStats
 }
 
@@ -60,7 +61,7 @@ func processChunk(filePath string, startOffset, endOffset int64, wg *sync.WaitGr
 		return
 	}
 
-	buf := make([]byte, 1024*1024)
+	buf := make([]byte, 2*1024*1024)
 
 	var result ChunkResult
 
@@ -168,6 +169,7 @@ func processLine(line []byte, items *[TableSize]StationItem) {
 			key := make([]byte, len(stationNameBytes))
 			copy(key, stationNameBytes)
 			items[idx].Key = key
+			items[idx].Hash = h
 
 			items[idx].Stats.Min = temp
 			items[idx].Stats.Max = temp
@@ -255,7 +257,7 @@ func main() {
 				continue
 			}
 
-			h := hash(item.Key)
+			h := item.Hash
 			idx := h & (TableSize - 1)
 
 			for {
@@ -263,7 +265,7 @@ func main() {
 					finalItems[idx] = *item
 					break
 				}
-				if bytes.Equal(finalItems[idx].Key, item.Key) {
+				if finalItems[idx].Hash == h && bytes.Equal(finalItems[idx].Key, item.Key) {
 					s := &finalItems[idx].Stats
 					s.Sum += item.Stats.Sum
 					s.Count += item.Stats.Count
